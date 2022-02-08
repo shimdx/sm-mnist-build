@@ -116,9 +116,9 @@ def get_pipeline(
         an instance of a pipeline
     """
     if use_hpo:
-        print(f"use_hop True:{use_hpo})
+        print(f"use_hop True:{use_hpo}")
     else:
-        print(f"use_hop False:{use_hpo})
+        print(f"use_hop False:{use_hpo}")
               
     sagemaker_session = get_session(region, default_bucket)
     if role is None:
