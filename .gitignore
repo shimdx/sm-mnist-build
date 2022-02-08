@@ -4,3 +4,4 @@
 .tox
 __pycache__
 .sagemaker-code-config
+.ipynb_checkpoints/
