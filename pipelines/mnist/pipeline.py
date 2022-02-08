@@ -103,6 +103,7 @@ def get_pipeline(
     model_package_group_name="MNISTPackageGroup",
     pipeline_name="MNISTPipeline",
     base_job_prefix="MNIST",
+    use_hpo=False
 ):
     """Gets a SageMaker ML Pipeline instance working with on abalone data.
 
@@ -114,10 +115,15 @@ def get_pipeline(
     Returns:
         an instance of a pipeline
     """
+    if use_hpo:
+        print(f"use_hop True:{use_hpo})
+    else:
+        print(f"use_hop False:{use_hpo})
+              
     sagemaker_session = get_session(region, default_bucket)
     if role is None:
         role = sagemaker.session.get_execution_role(sagemaker_session)
-
+    
     # parameters for pipeline execution
     processing_instance_count = ParameterInteger(name="ProcessingInstanceCount", default_value=1)
     processing_instance_type = ParameterString(name="ProcessingInstanceType", default_value="ml.m5.xlarge")
