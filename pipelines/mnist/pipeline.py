@@ -123,9 +123,7 @@ def get_pipeline(
     processing_instance_type = ParameterString(name="ProcessingInstanceType", default_value="ml.m5.xlarge")
     training_instance_count = ParameterInteger(name="TrainingInstanceCount", default_value=1)
     training_instance_type = ParameterString(name="TrainingInstanceType", default_value="ml.g4dn.xlarge")
-    model_approval_status = ParameterString(
-        name="ModelApprovalStatus", default_value="PendingManualApproval"
-    )
+    model_approval_status = ParameterString(name="ModelApprovalStatus", default_value="PendingManualApproval")
     
     
     # processing step for feature engineering
@@ -159,7 +157,7 @@ def get_pipeline(
     
     
     # training step for generating model artifacts
-    hyperparameters = {'epochs':5,'batch-size':24, 'backend': 'gloo'}
+    hyperparameters = {'epochs':10,'batch-size':256, 'backend': 'gloo'}
     mnist_train = PyTorch(
         entry_point="train.py",
         source_dir=BASE_DIR,
@@ -170,7 +168,7 @@ def get_pipeline(
         instance_type=training_instance_type,
         hyperparameters=hyperparameters,
         output_path = f"s3://{default_bucket}/{base_job_prefix}",
-        base_job_name=f"{base_job_prefix}/script-mnist-training",
+        base_job_name=f"{base_job_prefix}/pytorch-mnist-training",
     )
 
     step_train = TrainingStep(
@@ -178,11 +176,13 @@ def get_pipeline(
         estimator=mnist_train,
         inputs={
             "train": TrainingInput(
+#                 s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/train"
                 s3_data=step_process.properties.ProcessingOutputConfig.Outputs[
                     "train"
                 ].S3Output.S3Uri,
             ),
             "test": TrainingInput(
+#                 s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test"
                 s3_data=step_process.properties.ProcessingOutputConfig.Outputs[
                     "test"
                 ].S3Output.S3Uri,
@@ -211,10 +211,16 @@ def get_pipeline(
         processor=script_eval,
         inputs=[
             ProcessingInput(
+               source=f"{BASE_DIR}/code",
+                destination="/opt/ml/processing/input/code/code",
+            ),
+            ProcessingInput(
+#                source="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/pipelines-d6n63bndkfj5-TrainMNISTModel-cltXc4joRm/output",
                 source=step_train.properties.ModelArtifacts.S3ModelArtifacts,
                 destination="/opt/ml/processing/model",
             ),
             ProcessingInput(
+#                 source="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test",
                 source=step_process.properties.ProcessingOutputConfig.Outputs[
                     "test"
                 ].S3Output.S3Uri,
@@ -226,8 +232,47 @@ def get_pipeline(
         ],
         code=os.path.join(BASE_DIR, "evaluate.py"),
         property_files=[evaluation_report],
+        job_arguments=["--test","/opt/ml/processing/test"]
+    )
+    
+    # register model step that will be conditionally executed
+    model_metrics = ModelMetrics(
+        model_statistics=MetricsSource(
+            s3_uri="{}/evaluation.json".format(
+                step_eval.arguments["ProcessingOutputConfig"]["Outputs"][0]["S3Output"]["S3Uri"]
+            ),
+            content_type="application/json"
+        )
+    )
+    step_register = RegisterModel(
+        name="RegisterMNISTModel",
+        estimator=mnist_train,
+        model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
+        content_types=["text/plain"],
+        response_types=["text/plain"],
+        inference_instances=["ml.m5.large"],
+        transform_instances=["ml.m5.large"],
+        model_package_group_name=model_package_group_name,
+        approval_status=model_approval_status,
+        model_metrics=model_metrics,
     )
 
+    # condition step for evaluating model quality and branching execution
+    cond_lte = ConditionLessThanOrEqualTo(
+        left=JsonGet(
+            step=step_eval,
+            property_file=evaluation_report,
+            json_path="regression_metrics.nll_loss.value"
+        ),
+        right=1.0,
+    )
+    step_cond = ConditionStep(
+        name="CheckEvaluation",
+        conditions=[cond_lte],
+        if_steps=[step_register],
+        else_steps=[],
+    )
+    
     # pipeline instance
     pipeline = Pipeline(
         name=pipeline_name,
@@ -236,144 +281,10 @@ def get_pipeline(
             processing_instance_count,
             training_instance_type,
             training_instance_count,
+            model_approval_status
         ],
-        steps=[step_process, step_train, step_eval],
+        steps=[step_process, step_train, step_eval, step_cond],
+#         steps=[step_eval],
         sagemaker_session=sagemaker_session,
     )
-    
-#     model_path = f"s3://{sagemaker_session.default_bucket()}/{base_job_prefix}/MNIST-model"
-#     image_uri_train = sagemaker.image_uris.retrieve(
-#         framework="pytorch",
-#         region=region,
-#         version="1.9.1",
-#         py_version="py38",
-#         instance_type=processing_instance_type,
-#         image_scope="training",
-#     )
-#     mnist_train = Estimator(
-#         image_uri=image_uri,
-#         instance_type=training_instance_type,
-#         instance_count=1,
-#         output_path=model_path,
-#         base_job_name=f"{base_job_prefix}/abalone-train",
-#         sagemaker_session=sagemaker_session,
-#         role=role,
-#     )
-#     xgb_train.set_hyperparameters(
-#         objective="reg:linear",
-#         num_round=50,
-#         max_depth=5,
-#         eta=0.2,
-#         gamma=4,
-#         min_child_weight=6,
-#         subsample=0.7,
-#         silent=0,
-#     )
-#     step_train = TrainingStep(
-#         name="TrainAbaloneModel",
-#         estimator=xgb_train,
-#         inputs={
-#             "train": TrainingInput(
-#                 s3_data=step_process.properties.ProcessingOutputConfig.Outputs[
-#                     "train"
-#                 ].S3Output.S3Uri,
-#                 content_type="text/csv",
-#             ),
-#             "validation": TrainingInput(
-#                 s3_data=step_process.properties.ProcessingOutputConfig.Outputs[
-#                     "validation"
-#                 ].S3Output.S3Uri,
-#                 content_type="text/csv",
-#             ),
-#         },
-#     )
-
-#     # processing step for evaluation
-#     script_eval = ScriptProcessor(
-#         image_uri=image_uri,
-#         command=["python3"],
-#         instance_type=processing_instance_type,
-#         instance_count=1,
-#         base_job_name=f"{base_job_prefix}/script-abalone-eval",
-#         sagemaker_session=sagemaker_session,
-#         role=role,
-#     )
-#     evaluation_report = PropertyFile(
-#         name="AbaloneEvaluationReport",
-#         output_name="evaluation",
-#         path="evaluation.json",
-#     )
-#     step_eval = ProcessingStep(
-#         name="EvaluateAbaloneModel",
-#         processor=script_eval,
-#         inputs=[
-#             ProcessingInput(
-#                 source=step_train.properties.ModelArtifacts.S3ModelArtifacts,
-#                 destination="/opt/ml/processing/model",
-#             ),
-#             ProcessingInput(
-#                 source=step_process.properties.ProcessingOutputConfig.Outputs[
-#                     "test"
-#                 ].S3Output.S3Uri,
-#                 destination="/opt/ml/processing/test",
-#             ),
-#         ],
-#         outputs=[
-#             ProcessingOutput(output_name="evaluation", source="/opt/ml/processing/evaluation"),
-#         ],
-#         code=os.path.join(BASE_DIR, "evaluate.py"),
-#         property_files=[evaluation_report],
-#     )
-
-#     # register model step that will be conditionally executed
-#     model_metrics = ModelMetrics(
-#         model_statistics=MetricsSource(
-#             s3_uri="{}/evaluation.json".format(
-#                 step_eval.arguments["ProcessingOutputConfig"]["Outputs"][0]["S3Output"]["S3Uri"]
-#             ),
-#             content_type="application/json"
-#         )
-#     )
-#     step_register = RegisterModel(
-#         name="RegisterAbaloneModel",
-#         estimator=xgb_train,
-#         model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
-#         content_types=["text/csv"],
-#         response_types=["text/csv"],
-#         inference_instances=["ml.t2.medium", "ml.m5.large"],
-#         transform_instances=["ml.m5.large"],
-#         model_package_group_name=model_package_group_name,
-#         approval_status=model_approval_status,
-#         model_metrics=model_metrics,
-#     )
-
-#     # condition step for evaluating model quality and branching execution
-#     cond_lte = ConditionLessThanOrEqualTo(
-#         left=JsonGet(
-#             step=step_eval,
-#             property_file=evaluation_report,
-#             json_path="regression_metrics.mse.value"
-#         ),
-#         right=6.0,
-#     )
-#     step_cond = ConditionStep(
-#         name="CheckMSEAbaloneEvaluation",
-#         conditions=[cond_lte],
-#         if_steps=[step_register],
-#         else_steps=[],
-#     )
-
-#     # pipeline instance
-#     pipeline = Pipeline(
-#         name=pipeline_name,
-#         parameters=[
-#             processing_instance_type,
-#             processing_instance_count,
-#             training_instance_type,
-#             model_approval_status,
-#             input_data,
-#         ],
-#         steps=[step_process, step_train, step_eval, step_cond],
-#         sagemaker_session=sagemaker_session,
-#     )
     return pipeline

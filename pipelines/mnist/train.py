@@ -8,14 +8,12 @@ import sys
 
 
 import torch
+import torch.nn.functional as F
 import torch.distributed as dist
 import torch.optim as optim
-import torch.utils.data
-import torch.utils.data.distributed
-from torchvision import datasets, transforms
-from torchvision.datasets import MNIST
 
 from code.model import Net
+from code import dataloader
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -23,60 +21,6 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 
 
 # Based on https://github.com/pytorch/examples/blob/master/mnist/main.py
-# class Model(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-#         self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-#         self.conv2_drop = nn.Dropout2d()
-#         self.fc1 = nn.Linear(320, 50)
-#         self.fc2 = nn.Linear(50, 10)
-
-#     def forward(self, x):
-#         x = F.relu(F.max_pool2d(self.conv1(x), 2))
-#         x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-#         x = x.view(-1, 320)
-#         x = F.relu(self.fc1(x))
-#         x = F.dropout(x, training=self.training)
-#         x = self.fc2(x)
-#         return F.log_softmax(x, dim=1)
-
-
-def _get_train_data_loader(batch_size, training_dir, is_distributed, **kwargs):
-    logger.info("Get train data loader", training_dir)
-
-    mnist_transform = transforms.Compose([
-        transforms.ToTensor(), 
-        transforms.Normalize((0.5,), (1.0,))
-    ])
-    dataset = MNIST(training_dir, transform=mnist_transform, train=True)
-    train_sampler = (
-        torch.utils.data.distributed.DistributedSampler(dataset) if is_distributed else None
-    )
-    return torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=train_sampler is None,
-        sampler=train_sampler,
-        **kwargs
-    )
-
-
-def _get_test_data_loader(test_batch_size, test_dir, **kwargs):
-    logger.info("Get test data loader", test_dir)
-    mnist_transform = transforms.Compose([
-        transforms.ToTensor(), 
-        transforms.Normalize((0.5,), (1.0,))
-    ])
-    dataset = MNIST(test_dir, transform=mnist_transform, train=False)
-    return torch.utils.data.DataLoader(
-        dataset,
-        batch_size=test_batch_size,
-        shuffle=True,
-        **kwargs
-    )
-
-
 def _average_gradients(model):
     # Gradient averaging.
     size = float(dist.get_world_size())
@@ -111,8 +55,8 @@ def train(args):
     if use_cuda:
         torch.cuda.manual_seed(args.seed)
         
-    train_loader = _get_train_data_loader(args.batch_size, args.train, is_distributed, **kwargs)
-    test_loader = _get_test_data_loader(args.test_batch_size, args.test, **kwargs)
+    train_loader = dataloader.get_train_data_loader(args.batch_size, args.train, is_distributed, **kwargs)
+    test_loader = dataloader.get_test_data_loader(args.test_batch_size, args.test, **kwargs)
 
     logger.debug(
         "Processes {}/{} ({:.0f}%) of train data".format(
@@ -130,7 +74,7 @@ def train(args):
         )
     )
 
-    model = MNIST().to(device)
+    model = Net().to(device)
     if is_distributed and use_cuda:
         # multi-machine multi-gpu case
         model = torch.nn.parallel.DistributedDataParallel(model)
@@ -202,7 +146,6 @@ def save_model(model, model_dir):
 
 
 if __name__ == "__main__":
-    os.system("ls -al")
     parser = argparse.ArgumentParser()
 
     # Data and model checkpoints directories
