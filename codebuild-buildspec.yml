@@ -12,8 +12,8 @@ phases:
       - export PYTHONUNBUFFERED=TRUE
       - export SAGEMAKER_PROJECT_NAME_ID="${SAGEMAKER_PROJECT_NAME}-${SAGEMAKER_PROJECT_ID}"
       - export PIPELINE_NAME="sm-mnist-pipeline"
-      - export MODEL_PACKAGE_GROUP_NAME="mnist-pipeline"
-      - export BASE_JOB_PREFIX="mnist-pipeline"
+      - export MODEL_PACKAGE_GROUP_NAME="sm-mnist-group"
+      - export BASE_JOB_PREFIX="sm-mnist-job"
       - |
         run-pipeline --module-name pipelines.mnist.pipeline \
           --role-arn $SAGEMAKER_PIPELINE_ROLE_ARN \
