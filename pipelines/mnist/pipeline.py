@@ -170,7 +170,7 @@ def get_pipeline(
     
     
     # training step for generating model artifacts
-    hyperparameters = {'epochs':5,'batch-size':256, 'backend': 'gloo'}
+    hyperparameters = {'epochs':30,'batch-size':256, 'backend': 'gloo'}
     metric_definitions=[{'Name': 'train:error', 'Regex': 'Train Loss: ([0-9\\.]+)'}, {'Name': 'test:error', 'Regex': 'Test set: Average loss: ([0-9\\.]+)'}]
     mnist_train = PyTorch(
         entry_point="train.py",
@@ -191,8 +191,8 @@ def get_pipeline(
         "test": TrainingInput(s3_data=step_process.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri),
     }
     mnist_train_dummy_input = {
-        "train": TrainingInput(s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/train"),
-        "test": TrainingInput(s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test"),
+        "train": TrainingInput(s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-09-08-59-26-681/output/train"),
+        "test": TrainingInput(s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-09-08-59-26-681/output/test"),
     }
     model_artifact = None
     
@@ -282,12 +282,23 @@ def get_pipeline(
         )
     )
     
+#     model_artifact = "s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/pipelines-j9uxu7dtp31j-TrainMNISTModel-MUenCFfmMO/output/model.tar.gz"
+    mnist_model = PyTorchModel(
+        model_data=model_artifact,
+        entry_point="inference.py",
+        source_dir=BASE_DIR,
+        role=role,
+        py_version='py38',
+        framework_version="1.9.1",
+        sagemaker_session=sagemaker_session
+        
+    )
     step_register = RegisterModel(
         name="RegisterMNISTModel",
         estimator=mnist_train,
         model_data=model_artifact,
-        content_types=["text/plain"],
-        response_types=["text/plain"],
+        content_types=["application/json"],
+        response_types=["application/json"],
         inference_instances=["ml.m5.large"],
         transform_instances=["ml.m5.large"],
         model_package_group_name=model_package_group_name,
@@ -304,6 +315,7 @@ def get_pipeline(
         ),
         right=1.0,
     )
+    
     step_cond = ConditionStep(
         name="CheckEvaluation",
         conditions=[cond_lte],
@@ -317,6 +329,7 @@ def get_pipeline(
         steps=[step_process, step_tuning, step_eval, step_cond]
     else:
         steps=[step_process, step_train, step_eval, step_cond]
+#     steps=[step_train, step_register]
     pipeline = Pipeline(
         name=pipeline_name,
         parameters=[

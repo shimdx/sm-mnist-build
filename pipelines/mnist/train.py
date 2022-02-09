@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import shutil
 
 
 import torch
@@ -133,12 +134,15 @@ def model_fn(model_dir):
 
 def save_model(model, model_dir):
     logger.info("Saving the model to ", model_dir)
+    shutil.copy("inference.py", model_dir)
+    shutil.copytree("code", os.path.join(model_dir, "code"))
     path = os.path.join(model_dir, "model.pth")
     # recommended way from http://pytorch.org/docs/master/notes/serialization.html
     torch.save(model.cpu().state_dict(), path)
 
 
 if __name__ == "__main__":
+    logger.info("Training Start")
     parser = argparse.ArgumentParser()
 
     # Data and model checkpoints directories
