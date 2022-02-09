@@ -14,7 +14,7 @@ import boto3
 import sagemaker
 import sagemaker.session
 
-from sagemaker.pytorch import PyTorch
+from sagemaker.pytorch import (PyTorch, PyTorchModel)
 from sagemaker.inputs import TrainingInput
 from sagemaker.model_metrics import (
     MetricsSource,
@@ -121,10 +121,6 @@ def get_pipeline(
     Returns:
         an instance of a pipeline
     """
-    if use_hpo:
-        print(f"use_hop True:{use_hpo}")
-    else:
-        print(f"use_hop False:{use_hpo}")
               
     sagemaker_session = get_session(region, default_bucket)
     if role is None:
@@ -155,9 +151,9 @@ def get_pipeline(
         command=["python3"],
         instance_type=processing_instance_type,
         instance_count=processing_instance_count,
-        base_job_name=f"{base_job_prefix}/script-mnist-process",
         sagemaker_session=sagemaker_session,
         role=role,
+        base_job_name=f"{base_job_prefix}/script-mnist-process",
     )
     # 스텝으로 등록한다
     # 이미 S3에 데이터가 있는 경우 input을 지정해도 됨
@@ -174,7 +170,7 @@ def get_pipeline(
     
     
     # training step for generating model artifacts
-    hyperparameters = {'epochs':50,'batch-size':256, 'backend': 'gloo'}
+    hyperparameters = {'epochs':5,'batch-size':256, 'backend': 'gloo'}
     metric_definitions=[{'Name': 'train:error', 'Regex': 'Train Loss: ([0-9\\.]+)'}, {'Name': 'test:error', 'Regex': 'Test set: Average loss: ([0-9\\.]+)'}]
     mnist_train = PyTorch(
         entry_point="train.py",
@@ -213,7 +209,7 @@ def get_pipeline(
             objective_metric_name,
             hyperparameter_ranges,
             metric_definitions,
-            max_jobs=10,
+            max_jobs=5,
             max_parallel_jobs=5,
             objective_type=objective_type,
         )
@@ -237,10 +233,10 @@ def get_pipeline(
         image_uri=image_uri_processing,
         command=["python3"],
         instance_type=processing_instance_type,
-        instance_count=1,
-        base_job_name=f"{base_job_prefix}/script-mnist-eval",
+        instance_count=processing_instance_count,
         sagemaker_session=sagemaker_session,
         role=role,
+        base_job_name=f"{base_job_prefix}/script-mnist-eval",
     )
     evaluation_report = PropertyFile(
         name="MNISTEvaluationReport",
@@ -285,6 +281,7 @@ def get_pipeline(
             content_type="application/json"
         )
     )
+    
     step_register = RegisterModel(
         name="RegisterMNISTModel",
         estimator=mnist_train,

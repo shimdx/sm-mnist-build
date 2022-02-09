@@ -13,7 +13,6 @@ logger.addHandler(logging.StreamHandler())
 
 
 if __name__ == "__main__":
-    os.system("pwd")
     logger.debug("Starting preprocessing.")
     parser = argparse.ArgumentParser()
     parser.add_argument("--arg", type=str, required=False)
