@@ -88,24 +88,17 @@ def train(args):
         model.train()
         for batch_idx, (data, target) in enumerate(train_loader, 1):
             data, target = data.to(device), target.to(device)
+            running_loss = 0
             optimizer.zero_grad()
             output = model(data)
             loss = F.nll_loss(output, target)
             loss.backward()
+            running_loss += loss.item()
             if is_distributed and not use_cuda:
                 # average gradients manually for multi-machine cpu case only
                 _average_gradients(model)
             optimizer.step()
-            if batch_idx % args.log_interval == 0:
-                logger.info(
-                    "Train Epoch: {} [{}/{} ({:.0f}%)] Loss: {:.6f}".format(
-                        epoch,
-                        batch_idx * len(data),
-                        len(train_loader.sampler),
-                        100.0 * batch_idx / len(train_loader),
-                        loss.item(),
-                    )
-                )
+        logger.info("Train Epoch: {} - Train Loss: {:.6f}".format(epoch, running_loss/len(train_loader.dataset)))
         test(model, test_loader, device)
     save_model(model, args.model_dir)
 

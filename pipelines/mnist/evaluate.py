@@ -84,7 +84,7 @@ if __name__ == "__main__":
     
 
     report_dict = {
-        "regression_metrics": {
+        "classification_metrics": {
             "nll_loss": {
                 "value": nll_loss
             },

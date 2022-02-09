@@ -34,11 +34,17 @@ from sagemaker.workflow.parameters import (
     ParameterInteger,
     ParameterString,
 )
+from sagemaker.tuner import HyperparameterTuner
+from sagemaker.parameter import (
+    ContinuousParameter,
+    CategoricalParameter
+)
 from sagemaker.workflow.pipeline import Pipeline
 from sagemaker.workflow.properties import PropertyFile
 from sagemaker.workflow.steps import (
     ProcessingStep,
     TrainingStep,
+    TuningStep,
 )
 from sagemaker.workflow.step_collections import RegisterModel
 
@@ -134,6 +140,7 @@ def get_pipeline(
     
     # processing step for feature engineering
     # Docker Registry https://docs.aws.amazon.com/sagemaker/latest/dg/ecr-ap-northeast-2.html
+    # 토치비젼으로 전처리 하는 케이스에 사용하기 위해 토치용 이미지를 불러왔다.
     image_uri_processing = sagemaker.image_uris.retrieve(
         framework="pytorch",
         region=region,
@@ -142,15 +149,19 @@ def get_pipeline(
         instance_type=processing_instance_type,
         image_scope="inference",
     )
+    # 커스텀 스크립트로 전처리를 하는 경우 스크립트 프로세서를 사용
     script_process = ScriptProcessor(
         image_uri=image_uri_processing,
         command=["python3"],
         instance_type=processing_instance_type,
-        instance_count=1,
+        instance_count=processing_instance_count,
         base_job_name=f"{base_job_prefix}/script-mnist-process",
         sagemaker_session=sagemaker_session,
         role=role,
     )
+    # 스텝으로 등록한다
+    # 이미 S3에 데이터가 있는 경우 input을 지정해도 됨
+    # output은 버켓에 저장 된다. end of job, continuous 옵션이 있음
     step_process = ProcessingStep(
         name="PreprocessMNISTData",
         processor=script_process,
@@ -163,7 +174,8 @@ def get_pipeline(
     
     
     # training step for generating model artifacts
-    hyperparameters = {'epochs':10,'batch-size':256, 'backend': 'gloo'}
+    hyperparameters = {'epochs':50,'batch-size':256, 'backend': 'gloo'}
+    metric_definitions=[{'Name': 'train:error', 'Regex': 'Train Loss: ([0-9\\.]+)'}, {'Name': 'test:error', 'Regex': 'Test set: Average loss: ([0-9\\.]+)'}]
     mnist_train = PyTorch(
         entry_point="train.py",
         source_dir=BASE_DIR,
@@ -173,28 +185,51 @@ def get_pipeline(
         instance_count=training_instance_count,
         instance_type=training_instance_type,
         hyperparameters=hyperparameters,
+        metric_definitions=metric_definitions,
         output_path = f"s3://{default_bucket}/{base_job_prefix}",
         base_job_name=f"{base_job_prefix}/pytorch-mnist-training",
     )
-
-    step_train = TrainingStep(
-        name="TrainMNISTModel",
-        estimator=mnist_train,
-        inputs={
-            "train": TrainingInput(
-#                 s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/train"
-                s3_data=step_process.properties.ProcessingOutputConfig.Outputs[
-                    "train"
-                ].S3Output.S3Uri,
-            ),
-            "test": TrainingInput(
-#                 s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test"
-                s3_data=step_process.properties.ProcessingOutputConfig.Outputs[
-                    "test"
-                ].S3Output.S3Uri,
-            ),
-        },
-    )
+    
+    mnist_train_input = {
+        "train": TrainingInput(s3_data=step_process.properties.ProcessingOutputConfig.Outputs["train"].S3Output.S3Uri),
+        "test": TrainingInput(s3_data=step_process.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri),
+    }
+    mnist_train_dummy_input = {
+        "train": TrainingInput(s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/train"),
+        "test": TrainingInput(s3_data="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test"),
+    }
+    model_artifact = None
+    
+    if use_hpo:
+        hyperparameter_ranges = {
+            "lr": ContinuousParameter(0.001, 0.1),
+            "batch-size": CategoricalParameter([32, 64, 128, 256, 512]),
+        }
+        objective_metric_name = "test:error"
+        objective_type = "Minimize"
+        metric_definitions=[{'Name': 'train:error', 'Regex': 'Train Loss: ([0-9\\.]+)'}, {'Name': 'test:error', 'Regex': 'Test set: Average loss: ([0-9\\.]+)'}]
+        mnist_tuner = HyperparameterTuner(
+            mnist_train,
+            objective_metric_name,
+            hyperparameter_ranges,
+            metric_definitions,
+            max_jobs=10,
+            max_parallel_jobs=5,
+            objective_type=objective_type,
+        )
+        step_tuning = TuningStep(
+            name="TuningMNISTModel",
+            tuner=mnist_tuner,
+            inputs=mnist_train_input,
+        )
+        model_artifact=step_tuning.get_top_model_s3_uri(top_k=0, s3_bucket=default_bucket, prefix=base_job_prefix)
+    else:
+        step_train = TrainingStep(
+            name="TrainMNISTModel",
+            estimator=mnist_train,
+            inputs=mnist_train_input,
+        )
+        model_artifact=step_train.properties.ModelArtifacts.S3ModelArtifacts
     
     
     # processing step for evaluation
@@ -212,6 +247,8 @@ def get_pipeline(
         output_name="evaluation",
         path="evaluation.json",
     )
+    mnist_eval_dummy_model = "s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/pipelines-d6n63bndkfj5-TrainMNISTModel-cltXc4joRm/output"
+    mnist_eval_dummy_source = "s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test"
     step_eval = ProcessingStep(
         name="EvaluateMNISTModel",
         processor=script_eval,
@@ -221,12 +258,10 @@ def get_pipeline(
                 destination="/opt/ml/processing/input/code/code",
             ),
             ProcessingInput(
-#                source="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/pipelines-d6n63bndkfj5-TrainMNISTModel-cltXc4joRm/output",
-                source=step_train.properties.ModelArtifacts.S3ModelArtifacts,
+                source=model_artifact,
                 destination="/opt/ml/processing/model",
             ),
             ProcessingInput(
-#                 source="s3://sagemaker-ap-northeast-2-238312515155/sm-mnist/script-mnist-process-2022-02-08-08-29-18-597/output/test",
                 source=step_process.properties.ProcessingOutputConfig.Outputs[
                     "test"
                 ].S3Output.S3Uri,
@@ -253,7 +288,7 @@ def get_pipeline(
     step_register = RegisterModel(
         name="RegisterMNISTModel",
         estimator=mnist_train,
-        model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
+        model_data=model_artifact,
         content_types=["text/plain"],
         response_types=["text/plain"],
         inference_instances=["ml.m5.large"],
@@ -268,7 +303,7 @@ def get_pipeline(
         left=JsonGet(
             step=step_eval,
             property_file=evaluation_report,
-            json_path="regression_metrics.nll_loss.value"
+            json_path="classification_metrics.nll_loss.value"
         ),
         right=1.0,
     )
@@ -280,6 +315,11 @@ def get_pipeline(
     )
     
     # pipeline instance
+    steps=[]
+    if use_hpo:
+        steps=[step_process, step_tuning, step_eval, step_cond]
+    else:
+        steps=[step_process, step_train, step_eval, step_cond]
     pipeline = Pipeline(
         name=pipeline_name,
         parameters=[
@@ -289,8 +329,7 @@ def get_pipeline(
             training_instance_count,
             model_approval_status
         ],
-        steps=[step_process, step_train, step_eval, step_cond],
-#         steps=[step_eval],
+        steps=steps,
         sagemaker_session=sagemaker_session,
     )
     return pipeline
