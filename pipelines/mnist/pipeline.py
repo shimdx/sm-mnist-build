@@ -45,6 +45,7 @@ from sagemaker.workflow.steps import (
     ProcessingStep,
     TrainingStep,
     TuningStep,
+    CacheConfig
 )
 from sagemaker.workflow.step_collections import RegisterModel
 
@@ -133,6 +134,9 @@ def get_pipeline(
     training_instance_type = ParameterString(name="TrainingInstanceType", default_value="ml.g4dn.xlarge")
     model_approval_status = ParameterString(name="ModelApprovalStatus", default_value="PendingManualApproval")
     
+    # Cache Config
+    # https://docs.aws.amazon.com/sagemaker/latest/dg/pipelines-caching.html
+    cache_config = CacheConfig(enable_caching=True, expire_after="P7D")
     
     # processing step for feature engineering
     # Docker Registry https://docs.aws.amazon.com/sagemaker/latest/dg/ecr-ap-northeast-2.html
@@ -165,7 +169,8 @@ def get_pipeline(
             ProcessingOutput(output_name="train", source="/opt/ml/processing/train/"),
             ProcessingOutput(output_name="test", source="/opt/ml/processing/test/"),
         ],
-        code=os.path.join(BASE_DIR, "preprocess.py")
+        code=os.path.join(BASE_DIR, "preprocess.py"),
+        cache_config=cache_config
     )
     
     
@@ -209,7 +214,7 @@ def get_pipeline(
             objective_metric_name,
             hyperparameter_ranges,
             metric_definitions,
-            max_jobs=5,
+            max_jobs=20,
             max_parallel_jobs=5,
             objective_type=objective_type,
         )
@@ -224,6 +229,7 @@ def get_pipeline(
             name="TrainMNISTModel",
             estimator=mnist_train,
             inputs=mnist_train_input,
+            cache_config = CacheConfig(enable_caching=True, expire_after="P7D")
         )
         model_artifact=step_train.properties.ModelArtifacts.S3ModelArtifacts
     
