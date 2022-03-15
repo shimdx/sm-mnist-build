@@ -11,8 +11,8 @@ phases:
     commands:
       - export PYTHONUNBUFFERED=TRUE
       - export SAGEMAKER_PROJECT_NAME_ID="${SAGEMAKER_PROJECT_NAME}-${SAGEMAKER_PROJECT_ID}"
-      - export PIPELINE_NAME="sm-mnist-pipeline"
-      - export BASE_JOB_PREFIX="sm-mnist-job"
+      - export PIPELINE_NAME="sm-mnist-demo-pipeline"
+      - export BASE_JOB_PREFIX="sm-mnist-demo-job"
       - export USE_HPO="False"
       - |
         run-pipeline --module-name pipelines.mnist.pipeline \
