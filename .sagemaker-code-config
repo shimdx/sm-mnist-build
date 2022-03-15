@@ -1,6 +1,6 @@
 {
-  "codeRepositoryName": "sagemaker-p-jyytsuwy4oxn-modelbuild",
+  "codeRepositoryName": "sagemaker-p-ixctym1pdnhg-modelbuild",
   "codeRepositoryUrl": "https://github.com/shimdx/sm-mnist-build.git",
-  "sagemakerProjectName": "sm-mnist",
-  "sagemakerProjectId": "p-jyytsuwy4oxn"
+  "sagemakerProjectName": "sm-mnist-demo",
+  "sagemakerProjectId": "p-ixctym1pdnhg"
 }
